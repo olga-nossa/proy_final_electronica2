@@ -2,34 +2,35 @@
 #include <HardwareSerial.h>
 
 TinyGPSPlus gps;
-HardwareSerial SerialGPS(2);  // UART2
+HardwareSerial SerialGPS(2);          // UART2
 
-#define GPS_RX_PIN 19  // Conectar al TX del GPS
-#define GPS_TX_PIN 20  // Conectar al RX del GPS
+constexpr uint8_t GPS_RX_PIN = 16;    // RX2 ← TX GPS
+constexpr uint8_t GPS_TX_PIN = 17;    // TX2 → RX GPS (opcional)
 
 void setup() {
   Serial.begin(115200);
   SerialGPS.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-  Serial.println("Esperando datos del GPS...");
+  Serial.println("Esperando datos del GPS…");
 }
 
 void loop() {
-  while (SerialGPS.available()) {
-    char c = SerialGPS.read();
-    gps.encode(c);
-
-    // Muestra los datos crudos del GPS (opcional para debug)
-    Serial.write(c);
-  }
+  while (SerialGPS.available()) gps.encode(SerialGPS.read());
 
   if (gps.location.isUpdated()) {
-    Serial.println("\n=== DATOS GPS ===");
-    Serial.print("Latitud: ");
-    Serial.println(gps.location.lat(), 6);
-    Serial.print("Longitud: ");
-    Serial.println(gps.location.lng(), 6);
-    Serial.print("Satélites: ");
-    Serial.println(gps.satellites.value());
-    Serial.println("==================");
+    Serial.printf(
+      "\nLat: %.6f  Lon: %.6f  Sat: %u\n",
+      gps.location.lat(), gps.location.lng(), gps.satellites.value()
+    );
+
+    /* ── Fecha y hora ── */
+    if (gps.date.isValid() && gps.time.isValid()) {
+      Serial.printf(
+        "Fecha (UTC): %02u/%02u/%04u  Hora (UTC): %02u:%02u:%02u\n",
+        gps.date.day(), gps.date.month(), gps.date.year(),
+        gps.time.hour(), gps.time.minute(), gps.time.second()
+      );
+    } else {
+      Serial.println("Fecha/hora aún no disponible");
+    }
   }
 }

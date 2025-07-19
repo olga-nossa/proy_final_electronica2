@@ -1,80 +1,74 @@
-/*  ESP32  |  IMU (MPU‑6050) + LoRa (SX1278 433 MHz)
-    ────────────────────────────────────────────────
-    - I²C  : SDA 21, SCL 22  (puedes cambiarlos)
-    - LoRa : SS 5, RST 14, DIO0 26
-    - Salida: CSV  ax,ay,az,gx,gy,gz,temp
+/*  ESP32 DevKit v1
+    IMU (MPU‑6050) + DHT11 + LoRa SX1278 433 MHz
+    -------------------------------------------------
+    I²C   : SDA 21, SCL 22
+    LoRa  : SS 5,  RST 34*, DIO0 35        (*RST no se usa como salida)
+    DHT11 : GPIO 18
+    Salida CSV: ax,ay,az,gx,gy,gz,imuTemp,dhtTemp,dhtHum
 */
 
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
+#include <DHT.h>
 #include <SPI.h>
 #include <LoRa.h>
 
-/* ─── Pines LoRa ─── */
+/* ─── Pines ─── */
 constexpr uint8_t LORA_SS   = 5;
-constexpr uint8_t LORA_RST  = 34;
+constexpr uint8_t LORA_RST  = 34;   // GPIO 34 es solo‑entrada; el módulo se auto‑reseteará
 constexpr uint8_t LORA_DIO0 = 35;
 constexpr long    LORA_FREQ = 433E6;
 
+constexpr uint8_t DHTPIN  = 4;
+constexpr uint8_t DHTTYPE = DHT11;
+
 /* ─── Objetos ─── */
 Adafruit_MPU6050 mpu;
+DHT dht(DHTPIN, DHTTYPE);
 
-/* ─── Funciones ─── */
-bool initMPU() {
-  if (!mpu.begin()) return false;
+/* ─── Setup ─── */
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(21, 22, 400000);          // I²C rápido
+
+  if (!mpu.begin()) {
+    Serial.println("MPU6050 not found"); while (true);
+  }
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
   mpu.setGyroRange        (MPU6050_RANGE_500_DEG);
   mpu.setFilterBandwidth  (MPU6050_BAND_21_HZ);
-  return true;
-}
 
-bool initLoRa() {
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
-  return LoRa.begin(LORA_FREQ);
-}
+  if (!LoRa.begin(LORA_FREQ)) {
+    Serial.println("LoRa init failed"); while (true);
+  }
 
-String buildPayload(const sensors_event_t& a,
-                    const sensors_event_t& g,
-                    const sensors_event_t& t) {
-  // ax,ay,az,gx,gy,gz,temp
-  char buf[96];
-  snprintf(buf, sizeof(buf),
-           "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
-           a.acceleration.x, a.acceleration.y, a.acceleration.z,
-           g.gyro.x,        g.gyro.y,        g.gyro.z,
-           t.temperature);
-  return String(buf);
-}
-
-void sendLoRa(const String& payload) {
-  LoRa.beginPacket();
-  LoRa.print(payload);
-  LoRa.endPacket();
-}
-
-void setup() {
-  Serial.begin(115200);
-  if (!initMPU())  { Serial.println("MPU6050 not found"); for (;;) delay(10); }
-  if (!initLoRa()) { Serial.println("LoRa init failed");  for (;;) delay(10); }
+  dht.begin();
   Serial.println("System ready");
-  delay(100);
 }
 
+/* ─── Loop ─── */
 void loop() {
-  sensors_event_t a, g, t;
-  mpu.getEvent(&a, &g, &t);
+  sensors_event_t acc, gyr, imuT;
+  mpu.getEvent(&acc, &gyr, &imuT);
 
-  String payload = buildPayload(a, g, t);
-  sendLoRa(payload);
+  float dhtH = dht.readHumidity();
+  float dhtT = dht.readTemperature();
+  if (isnan(dhtH) || isnan(dhtT)) { dhtH = dhtT = NAN; }
 
-  Serial.println(payload);
-  delay(1000);                           // 1 Hz; ajusta lo que necesites
+  /* Construir cadena CSV */
+  char buf[128];
+  snprintf(buf, sizeof(buf),
+           "%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f",
+           acc.acceleration.x, acc.acceleration.y, acc.acceleration.z,
+           gyr.gyro.x,        gyr.gyro.y,        gyr.gyro.z,
+           imuT.temperature,  dhtT,              dhtH);
+
+  /* Enviar y mostrar */
+  LoRa.beginPacket();
+  LoRa.print(buf);
+  LoRa.endPacket();
+
+  Serial.println(buf);
+  delay(1000);                         // 1 Hz
 }
-
-/*  ──────────────── Notas para futuro ────────────────
-    - Para añadir sensores crea otra función buildPayload()
-      que concatene nuevos valores (ej. pres,hum,etc.).
-    - Si el paquete supera ~200 bytes, considera enviar
-      binario o varios paquetes.
-    - Para recepción usa LoRa.parsePacket() y separa con strtok().
-*/
